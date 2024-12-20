@@ -132,9 +132,13 @@ async function onMessage (message) {
 
 async function handleGuestMessage(message){
   let chatId = message.chat.id;
-  let isblocked = await nfd.get('isblocked-' + chatId, { type: "json" })
   
-  if(isblocked){
+  // 检查用户是否被屏蔽
+  const blocked = await env.DB.prepare(
+    'SELECT is_blocked FROM user_blocks WHERE chat_id = ?'
+  ).bind(chatId.toString()).first();
+  
+  if(blocked?.is_blocked){
     return sendMessage({
       chat_id: chatId,
       text:'Your are blocked'
@@ -146,16 +150,17 @@ async function handleGuestMessage(message){
     from_chat_id:message.chat.id,
     message_id:message.message_id
   })
-  console.log(JSON.stringify(forwardReq))
+  
   if(forwardReq.ok){
-    await nfd.put('msg-map-' + forwardReq.result.message_id, chatId)
+    // 存储消息映射
+    await env.DB.prepare(
+      'INSERT INTO message_maps (message_id, chat_id) VALUES (?, ?)'
+    ).bind(forwardReq.result.message_id, chatId.toString()).run();
   }
   return handleNotify(message)
 }
 
 async function handleNotify(message){
-  // 先判断是否是诈骗人员，如果是，则直接提醒
-  // 如果不是，则根据时间间隔提醒：用户id，交易注意点等
   let chatId = message.chat.id;
   if(await isFraud(chatId)){
     return sendMessage({
@@ -163,10 +168,17 @@ async function handleNotify(message){
       text:`检测到骗子，UID${chatId}`
     })
   }
+  
   if(enable_notification){
-    let lastMsgTime = await nfd.get('lastmsg-' + chatId, { type: "json" })
-    if(!lastMsgTime || Date.now() - lastMsgTime > NOTIFY_INTERVAL){
-      await nfd.put('lastmsg-' + chatId, Date.now())
+    const lastMsg = await env.DB.prepare(
+      'SELECT last_message_time FROM last_messages WHERE chat_id = ?'
+    ).bind(chatId.toString()).first();
+    
+    if(!lastMsg || Date.now() - lastMsg.last_message_time > NOTIFY_INTERVAL){
+      await env.DB.prepare(
+        'INSERT OR REPLACE INTO last_messages (chat_id, last_message_time) VALUES (?, ?)'
+      ).bind(chatId.toString(), Date.now()).run();
+      
       return sendMessage({
         chat_id: ADMIN_UID,
         text:await fetch(notificationUrl).then(r => r.text())
@@ -176,42 +188,59 @@ async function handleNotify(message){
 }
 
 async function handleBlock(message){
-  let guestChantId = await nfd.get('msg-map-' + message.reply_to_message.message_id,
-                                      { type: "json" })
-  if(guestChantId === ADMIN_UID){
+  const guestChatId = await env.DB.prepare(
+    'SELECT chat_id FROM message_maps WHERE message_id = ?'
+  ).bind(message.reply_to_message.message_id).first();
+  
+  if(!guestChatId) return;
+  if(guestChatId.chat_id === ADMIN_UID){
     return sendMessage({
       chat_id: ADMIN_UID,
       text:'不能屏蔽自己'
     })
   }
-  await nfd.put('isblocked-' + guestChantId, true)
+  
+  await env.DB.prepare(
+    'INSERT OR REPLACE INTO user_blocks (chat_id, is_blocked) VALUES (?, ?)'
+  ).bind(guestChatId.chat_id, true).run();
 
   return sendMessage({
     chat_id: ADMIN_UID,
-    text: `UID:${guestChantId}屏蔽成功`,
+    text: `UID:${guestChatId.chat_id}屏蔽成功`,
   })
 }
 
 async function handleUnBlock(message){
-  let guestChantId = await nfd.get('msg-map-' + message.reply_to_message.message_id,
-  { type: "json" })
-
-  await nfd.put('isblocked-' + guestChantId, false)
+  const guestChatId = await env.DB.prepare(
+    'SELECT chat_id FROM message_maps WHERE message_id = ?'
+  ).bind(message.reply_to_message.message_id).first();
+  
+  if(!guestChatId) return;
+  
+  await env.DB.prepare(
+    'INSERT OR REPLACE INTO user_blocks (chat_id, is_blocked) VALUES (?, ?)'
+  ).bind(guestChatId.chat_id, false).run();
 
   return sendMessage({
     chat_id: ADMIN_UID,
-    text:`UID:${guestChantId}解除屏蔽成功`,
+    text:`UID:${guestChatId.chat_id}解除屏蔽成功`,
   })
 }
 
 async function checkBlock(message){
-  let guestChantId = await nfd.get('msg-map-' + message.reply_to_message.message_id,
-  { type: "json" })
-  let blocked = await nfd.get('isblocked-' + guestChantId, { type: "json" })
+  const guestChatId = await env.DB.prepare(
+    'SELECT chat_id FROM message_maps WHERE message_id = ?'
+  ).bind(message.reply_to_message.message_id).first();
+  
+  if(!guestChatId) return;
+  
+  const blocked = await env.DB.prepare(
+    'SELECT is_blocked FROM user_blocks WHERE chat_id = ?'
+  ).bind(guestChatId.chat_id).first();
 
   return sendMessage({
     chat_id: ADMIN_UID,
-    text: `UID:${guestChantId}` + (blocked ? '被屏蔽' : '没有被屏蔽')
+    text: `UID:${guestChatId.chat_id}` + (blocked?.is_blocked ? '被屏蔽' : '没有被屏蔽')
   })
 }
 

@@ -17,11 +17,34 @@ No Fraud / Node Forward Bot
 2. 从[uuidgenerator](https://www.uuidgenerator.net/)获取一个随机uuid作为secret
 3. 从[@username_to_id_bot](https://t.me/username_to_id_bot)获取你的用户id
 4. 登录[cloudflare](https://workers.cloudflare.com/)，创建一个worker
-5. 配置worker的变量
-    - 增加一个`ENV_BOT_TOKEN`变量，数值为从步骤1中获得的token
-    - 增加一个`ENV_BOT_SECRET`变量，数值为从步骤2中获得的secret
-    - 增加一个`ENV_ADMIN_UID`变量，数值为从步骤3中获得的用户id
-6. 绑定kv数据库，创建一个Namespace Name为`nfd`的kv数据库，在setting -> variable中设置`KV Namespace Bindings`：nfd -> nfd
+5. 在 Cloudflare Dashboard 中创建 D1 数据库
+   - 进入 Workers & Pages -> D1
+   - 点击 "Create database" 创建新数据库，命名为 `nfd`
+   - 创建完成后，点击数据库进入详情页
+   - 在 "Quick queries" 中执行以下 SQL 语句创建必要的表：
+   ```sql
+   CREATE TABLE message_maps (
+       message_id INTEGER PRIMARY KEY,
+       chat_id TEXT NOT NULL
+   );
+
+   CREATE TABLE user_blocks (
+       chat_id TEXT PRIMARY KEY,
+       is_blocked BOOLEAN NOT NULL
+   );
+
+   CREATE TABLE last_messages (
+       chat_id TEXT PRIMARY KEY,
+       last_message_time INTEGER NOT NULL
+   );
+   ```
+6. 配置 worker
+   - 增加一个`ENV_BOT_TOKEN`变量，数值为从步骤1中获得的token
+   - 增加一个`ENV_BOT_SECRET`变量，数值为从步骤2中获得的secret
+   - 增加一个`ENV_ADMIN_UID`变量，数值为从步骤3中获得的用户id
+   - 在 Settings -> D1 database bindings 中，添加一个绑定：
+     - Variable name: `DB`
+     - Database: 选择刚才创建的 `nfd` 数据库
 7. 点击`Quick Edit`，复制[这个文件](./worker.js)到编辑器中
 8. 通过打开`https://xxx.workers.dev/registerWebhook`来注册websoket
 
